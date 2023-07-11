@@ -1,30 +1,24 @@
-@echo off
+rem @echo off
+
+rem ~dp0 refers to the full path to the batch file's directory (static)
+rem ~dpnx0 and ~f0 both refer to the full path to the batch directory and file name (static).
 
 :: BatchGotAdmin
 :-------------------------------------
 REM  --> Check for permissions
-    IF "%PROCESSOR_ARCHITECTURE%" EQU "amd64" (
->nul 2>&1 "%SYSTEMROOT%\SysWOW64\cacls.exe" "%SYSTEMROOT%\SysWOW64\config\system"
-) ELSE (
->nul 2>&1 "%SYSTEMROOT%\system32\cacls.exe" "%SYSTEMROOT%\system32\config\system"
+net file 1>NUL 2>NUL
+if not '%errorlevel%' == '0' (
+    echo Requesting administrative privileges...
+    powershell.exe -noprofile -c Start-Process -FilePath "%0" -ArgumentList "%cd%" -verb runas >NUL 2>&1
+    exit /b
 )
 
-REM --> If error flag set, we do not have admin.
-if '%errorlevel%' NEQ '0' (
-    echo Requesting administrative privileges...
-    goto UACPrompt
-) else ( goto gotAdmin )
-
-:UACPrompt
-    echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
-    set params= %*
-    echo UAC.ShellExecute "cmd.exe", "/c ""%~s0"" %params:"=""%", "", "runas", 1 >> "%temp%\getadmin.vbs"
-
-    "%temp%\getadmin.vbs"
-    del "%temp%\getadmin.vbs"
-    exit /B
-
 :gotAdmin
+	net file 1>NUL 2>NUL
+	if not '%errorlevel%' == '0' (goto ErrorAdmin)
+    echo Got administrative privileges..
+	:: Change directory with passed argument. Processes started with
+	:: "runas" start with forced C:\Windows\System32 workdir
     pushd "%CD%"
     CD /D "%~dp0"
 :--------------------------------------    
@@ -32,10 +26,11 @@ if '%errorlevel%' NEQ '0' (
 cd "Virtual comport driver"
 cd Win8
 
-echo Let's install VCP driver silently
-if "%PROCESSOR_ARCHITEW6432%" == "AMD64" goto VCP_X64
+echo Current directory is: %cd%
+echo Installing VCP driver silently
 if "%PROCESSOR_ARCHITECTURE%" == "AMD64" goto VCP_X64
 start "" dpinst_x86.exe /s
+if not '%errorlevel%' == '0' (goto ErrorInstall)
 goto VCP_END
 :VCP_X64
 start "" dpinst_amd64.exe /s
@@ -43,13 +38,12 @@ start "" dpinst_amd64.exe /s
 
 cd ../..
 echo Done installing VCP silently
-pwd
+echo Current directory is: %cd%
 
-echo Let's install ST-Link driver silently
+echo Installing ST-Link driver silently
 cd ST-LINK_USB_V2_1_Driver
 
 @echo off
-if "%PROCESSOR_ARCHITEW6432%" == "AMD64" goto ST_X64
 if "%PROCESSOR_ARCHITECTURE%" == "AMD64" goto ST_X64
 start "" dpinst_x86.exe /sw
 goto ST_END
@@ -59,11 +53,18 @@ start "" dpinst_amd64.exe /sw
 
 cd ..
 echo Done installing ST-Link silently
-pwd
+
 
 cd DFU_Driver
-echo "Now installing stm32bootloader driver"
+echo "Installing stm32bootloader driver"
 install_elevated_STM32Bootloader.bat
 cd ..
 
+exit
+
+:ErrorAdmin
+echo Error: Failed to get administrative privileges..
+exit
+:ErrorInstall
+echo Error: Failed to install driver..
 exit
