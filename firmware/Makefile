@@ -1,7 +1,6 @@
 ##############################################################################
-# see readme.md
-# see setup_linux_environment.sh but Windows is also totally fine
-#
+# See fome-fw/firmware/DEVELOPER.md
+##############################################################################
 
 CHIBIOS = ChibiOS
 RULESPATH = $(CHIBIOS)/os/common/startup/ARMCMx/compilers/GCC/mk
@@ -194,8 +193,14 @@ ifeq ($(USE_FATFS),yes)
   include $(PROJECT_DIR)/ext/FatFS/fatfs.mk
 endif
 
+ifeq ($(USE_WIFI),yes)
+  include $(PROJECT_DIR)/ext/atwinc1500/atwinc1500.mk
+  DDEFS += -DEFI_WIFI=1
+endif
+
 include $(PROJECT_DIR)/hw_layer/mass_storage/mass_storage.mk
 include $(PROJECT_DIR)/common.mk
+include $(PROJECT_DIR)/controllers/modules/modules.mk
 
 ifeq ($(USE_OPENBLT),yes)
   # Reserve start of flash for OpenBLT
@@ -210,6 +215,7 @@ $(info SHORT_BOARD_NAME: $(SHORT_BOARD_NAME))
 $(info CPU_HWLAYER:   $(CPU_HWLAYER))
 $(info CONFDIR:       $(CONFDIR))
 $(info LDSCRIPT:      $(LDSCRIPT))
+$(info MODULES_INC:   $(MODULES_INC))
 
 # C sources that can be compiled in ARM or THUMB mode depending on the global
 # setting.
@@ -235,6 +241,7 @@ CPPSRC = \
   $(HW_LAYER_DRIVERS_CORE_CPP) \
   $(HW_LAYER_DRIVERS_CPP) \
   $(CONSOLE_SRC_CPP) \
+  $(MODULES_CPPSRC) \
   $(RUSEFI_LIB_CPP) \
   rusefi.cpp \
   main.cpp
@@ -271,6 +278,7 @@ INCDIR = \
   $(PCH_DIR) \
   $(BOARDINC) \
   $(ALLINC) \
+  $(MODULES_INC) \
   $(TESTINC) \
   $(CHIBIOS)/os/various \
   $(RUSEFI_LIB_INC) \
@@ -292,11 +300,8 @@ INCDIR = \
 # Compiler settings
 #
 
-ifeq ($(CROSS_COMPILE),)
-  TRGT = arm-none-eabi-
-else
-  TRGT = $(CROSS_COMPILE)
-endif
+include $(PROJECT_DIR)/use_arm_gcc.mk
+
 CC   = $(TRGT)gcc
 CPPC = $(TRGT)g++
 # Enable loading with g++ only if you need C++ runtime support.
@@ -357,4 +362,10 @@ include $(RULESFILE)
 
 # Enable precompiled header
 include $(PROJECT_DIR)/rusefi_pch.mk
+include $(PROJECT_DIR)/fome_generated.mk
 include $(PROJECT_DIR)/gitversion.mk
+include $(PROJECT_DIR)/controllers/modules/modules_header_gen.mk
+
+.PHONY: CLEAN_RULE_HOOK CLEAN_PCH_HOOK CLEAN_BUNDLE_HOOK
+
+CLEAN_RULE_HOOK: CLEAN_PCH_HOOK CLEAN_GENERATED_HOOK

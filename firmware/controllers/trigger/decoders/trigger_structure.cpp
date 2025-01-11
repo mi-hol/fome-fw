@@ -69,16 +69,16 @@ void TriggerWaveform::initialize(operation_mode_e operationMode, SyncEdge syncEd
 
 	m_operationMode = operationMode;
 	m_syncEdge = syncEdge;
-	triggerShapeSynchPointIndex = 0;
-	memset(expectedEventCount, 0, sizeof(expectedEventCount));
+	triggerShapeSynchPointIndex = unexpected;
+	setArrayValues(expectedEventCount, 0);
 	wave.reset();
 	wave.waveCount = TRIGGER_INPUT_PIN_COUNT;
 	wave.phaseCount = 0;
 	previousAngle = 0;
-	memset(isRiseEvent, 0, sizeof(isRiseEvent));
+	setArrayValues(isRiseEvent, 0);
 #if EFI_UNIT_TEST
-	memset(&triggerSignalIndeces, 0, sizeof(triggerSignalIndeces));
-	memset(&triggerSignalStates, 0, sizeof(triggerSignalStates));
+	memset(triggerSignalIndeces, 0, sizeof(triggerSignalIndeces));
+	setArrayValues(triggerSignalStates, 0);
 	knownOperationMode = true;
 #endif // EFI_UNIT_TEST
 }
@@ -88,7 +88,7 @@ size_t TriggerWaveform::getSize() const {
 }
 
 int TriggerWaveform::getTriggerWaveformSynchPointIndex() const {
-	return triggerShapeSynchPointIndex;
+	return triggerShapeSynchPointIndex.value_or(-1);
 }
 
 /**
@@ -249,7 +249,7 @@ void TriggerWaveform::addEvent(angle_t angle, bool state, TriggerWheel const cha
 	}
 
 	if (angle <= 0 || angle > 1) {
-		firmwareError(ObdCode::CUSTOM_ERR_6599, "angle should be positive not above 1: index=%d angle %f", channelIndex, angle);
+		firmwareError(ObdCode::CUSTOM_ERR_6599, "angle should be positive not above 1: index=%d angle %f", (int)channelIndex, angle);
 		return;
 	}
 	if (wave.phaseCount > 0) {
@@ -411,8 +411,8 @@ void TriggerWaveform::initializeTriggerWaveform(operation_mode_e triggerOperatio
 		break;
 
 	case trigger_type_e::TT_MITSUBISHI_MESS:
-	    initializeMitsubishi4gMess(this);
-        break;
+		initializeMitsubishi4gMess(this);
+		break;
 
 	case trigger_type_e::TT_MAZDA_MIATA_VVT_TEST:
 		initializeMazdaMiataVVtTestShape(this);
@@ -432,6 +432,10 @@ void TriggerWaveform::initializeTriggerWaveform(operation_mode_e triggerOperatio
 
 	case trigger_type_e::TT_VVT_MIATA_NB:
 		initializeMazdaMiataVVtCamShape(this);
+		break;
+
+	case trigger_type_e::TT_VVT_MIATA_NA:
+		initializeMazdaMiataNaCamShape(this);
 		break;
 
 	case trigger_type_e::TT_RENIX_66_2_2_2:
@@ -472,17 +476,17 @@ void TriggerWaveform::initializeTriggerWaveform(operation_mode_e triggerOperatio
 		initializeNissanVQvvt(this);
 		break;
 
-    case trigger_type_e::TT_VVT_MITSUBISHI_3A92:
+	case trigger_type_e::TT_VVT_MITSUBISHI_3A92:
 		initializeVvt3A92(this);
 		break;
 
-    case trigger_type_e::TT_VVT_TOYOTA_4_1:
+	case trigger_type_e::TT_VVT_TOYOTA_4_1:
 		initializeSkippedToothTrigger(this, 4, 1, triggerOperationMode, SyncEdge::RiseOnly);
 		setTriggerSynchronizationGap3(/*gapIndex*/0, /*from*/1.60, 2.40);
 		setTriggerSynchronizationGap3(/*gapIndex*/1, /*from*/0.75, 1.25);
 		break;
 
-    case trigger_type_e::TT_VVT_MITSUBISHI_6G75:
+	case trigger_type_e::TT_VVT_MITSUBISHI_6G75:
 	case trigger_type_e::TT_NISSAN_QR25:
 		initializeNissanQR25crank(this);
 		break;
@@ -552,12 +556,12 @@ void TriggerWaveform::initializeTriggerWaveform(operation_mode_e triggerOperatio
 		break;
 
 	case trigger_type_e::TT_36_2_1_1:
-	    initialize36_2_1_1(this);
-	    break;
+		initialize36_2_1_1(this);
+		break;
 
 	case trigger_type_e::TT_36_2_1:
-	    initialize36_2_1(this);
-	    break;
+		initialize36_2_1(this);
+		break;
 
 	case trigger_type_e::TT_TOOTHED_WHEEL_32_2:
 		initializeSkippedToothTrigger(this, 32, 2, triggerOperationMode, SyncEdge::RiseOnly);
@@ -606,19 +610,23 @@ void TriggerWaveform::initializeTriggerWaveform(operation_mode_e triggerOperatio
 		break;
 
 	case trigger_type_e::TT_VVT_MAZDA_SKYACTIV:
-	    initializeMazdaSkyactivCam(this);
-        break;
+		initializeMazdaSkyactivCam(this);
+		break;
+
+	case trigger_type_e::TT_VVT_MAZDA_L:
+		initializeMazdaLCam(this);
+		break;
 
 	case trigger_type_e::TT_BENELLI_TRE:
-	    configureBenelli(this);
-        break;
+		configureBenelli(this);
+		break;
 
 	case trigger_type_e::TT_MITSU_4G63_CAM:
-	    initializeMitsubishi4g63Cam(this);
+		initializeMitsubishi4g63Cam(this);
 		break;
 	case trigger_type_e::TT_MITSU_4G9x_CAM:
-	    initializeMitsubishi4g9xCam(this);
-        break;
+		initializeMitsubishi4g9xCam(this);
+		break;
 	case trigger_type_e::TT_1_16:
 		configureOnePlus16(this);
 		break;
@@ -705,7 +713,7 @@ void TriggerWaveform::initializeTriggerWaveform(operation_mode_e triggerOperatio
 
 	default:
 		setShapeDefinitionError(true);
-		warning(ObdCode::CUSTOM_ERR_NO_SHAPE, "initializeTriggerWaveform() not implemented: %d", triggerConfig.TriggerType.type);
+		warning(ObdCode::CUSTOM_ERR_NO_SHAPE, "initializeTriggerWaveform() not implemented: %d", (int)triggerConfig.TriggerType.type);
 	}
 
 	/**

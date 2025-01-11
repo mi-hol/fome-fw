@@ -7,9 +7,9 @@
 # As of Sep 2019, this is known to compile on Linux
 # in my case I had to
 # sudo apt-get install gcc-multilib g++-multilib
-# 
+#
 # todo: automatically execute that command same as we automatically fetch submodules?
-# 
+#
 
 
 
@@ -83,7 +83,7 @@ endif
 
 # Linker extra options here.
 ifeq ($(USE_LDOPT),)
-  USE_LDOPT = 
+  USE_LDOPT =
 endif
 
 # Enable this if you want link time optimizations (LTO)
@@ -158,6 +158,7 @@ endif
 include $(PROJECT_DIR)/console/binary/tunerstudio.mk
 include $(PROJECT_DIR)/console/console.mk
 include $(PROJECT_DIR)/common.mk
+include $(PROJECT_DIR)/controllers/modules/modules.mk
 
 
 # C sources that can be compiled in ARM or THUMB mode depending on the global
@@ -181,6 +182,7 @@ CPPSRC = $(ALLCPPSRC) \
   simulator/system/signal_executor_sleep.cpp \
   simulator/boards.cpp \
   $(TEST_SRC_CPP) \
+  $(MODULES_CPPSRC) \
   $(RUSEFI_LIB_CPP) \
   main.cpp
 
@@ -191,6 +193,7 @@ ASMSRC = $(PORTASM)
 INCDIR = . \
   $(PCH_DIR) \
   $(ALLINC) \
+  $(MODULES_INC) \
   $(CHIBIOS)/os/various/cpp_wrappers \
   $(PROJECT_DIR)/hw_layer/drivers/can \
   ${CHIBIOS}/os/various \
@@ -217,13 +220,13 @@ $(info OS is [${OS}])
 
 ifeq ($(OS),Windows_NT)
   # ChibiOS seem to require 32 bit compiler at least on Windows
-  # base 32-bit Cygwin is needed with mingw64 32-bit version 
+  # base 32-bit Cygwin is needed with mingw64 32-bit version
   # Cygwin64 would not debug if used with mingw64 32-bit version
   # 32 bit GDB available at http://www.equation.com/servlet/equation.cmd?fa=gdb
 
   TRGT = i686-w64-mingw32-
 else
-  TRGT = 
+  TRGT =
 endif
 
 CC   = $(TRGT)gcc
@@ -288,4 +291,10 @@ include $(RULESPATH)/rules.mk
 
 # Enable precompiled header
 include $(PROJECT_DIR)/rusefi_pch.mk
+include $(PROJECT_DIR)/fome_generated.mk
 include $(PROJECT_DIR)/gitversion.mk
+include $(PROJECT_DIR)/controllers/modules/modules_header_gen.mk
+
+.PHONY: CLEAN_RULE_HOOK CLEAN_PCH_HOOK CLEAN_BUNDLE_HOOK
+
+CLEAN_RULE_HOOK: CLEAN_PCH_HOOK CLEAN_GENERATED_HOOK

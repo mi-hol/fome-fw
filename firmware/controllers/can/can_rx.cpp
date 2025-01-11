@@ -84,7 +84,23 @@ static void printPacket(CanBusIndex busIndex, const CANRxFrame &rx) {
 
 volatile float canMap = 0;
 
-CanListener *canListeners_head = nullptr;
+struct CanListenerTailSentinel : public CanListener {
+	CanListenerTailSentinel()
+		: CanListener(0)
+	{
+	}
+
+	bool acceptFrame(const CANRxFrame&) const override {
+		return false;
+	}
+
+	void decodeFrame(const CANRxFrame&, efitick_t) override {
+		// nothing to do
+	}
+};
+
+static CanListenerTailSentinel tailSentinel;
+CanListener *canListeners_head = &tailSentinel;
 
 void serviceCanSubscribers(const CANRxFrame &frame, efitick_t nowNt) {
 	CanListener *current = canListeners_head;
@@ -95,8 +111,11 @@ void serviceCanSubscribers(const CANRxFrame &frame, efitick_t nowNt) {
 }
 
 void registerCanListener(CanListener& listener) {
-	listener.setNext(canListeners_head);
-	canListeners_head = &listener;
+	// If the listener already has a next, it's already registered
+	if (!listener.hasNext()) {
+		listener.setNext(canListeners_head);
+		canListeners_head = &listener;
+	}
 }
 
 void registerCanSensor(CanSensorBase& sensor) {
@@ -210,15 +229,7 @@ void processCanRxMessage(CanBusIndex busIndex, const CANRxFrame &frame, efitick_
 
 	processLuaCan(busIndex, frame);
 
-#if EFI_CANBUS_SLAVE
-	if (CAN_EID(frame) == engineConfiguration->verboseCanBaseAddress + CAN_SENSOR_1_OFFSET) {
-		int16_t mapScaled = *reinterpret_cast<const int16_t*>(&frame.data8[0]);
-		canMap = mapScaled / (1.0 * PACK_MULT_PRESSURE);
-	} else
-#endif
-	{
-		obdOnCanPacketRx(frame, busIndex);
-	}
+	obdOnCanPacketRx(frame, busIndex);
 
 #if EFI_WIDEBAND_FIRMWARE_UPDATE
 	// Bootloader acks with address 0x727573 aka ascii "rus"

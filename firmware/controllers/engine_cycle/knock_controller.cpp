@@ -8,16 +8,9 @@
 #include "pch.h"
 #include "knock_logic.h"
 
-void KnockController::onConfigurationChange(engine_configuration_s const * previousConfig) {
-	KnockControllerBase::onConfigurationChange(previousConfig);
-
-	m_maxRetardTable.init(config->maxKnockRetardTable, config->maxKnockRetardRpmBins, config->maxKnockRetardLoadBins);
-}
-
 int getCylinderKnockBank(uint8_t cylinderNumber) {
 	// C/C++ can't index in to bit fields, we have to provide lookup ourselves
 	switch (cylinderNumber) {
-#if EFI_PROD_CODE
 		case 0:
 			return engineConfiguration->knockBankCyl1;
 		case 1:
@@ -42,7 +35,6 @@ int getCylinderKnockBank(uint8_t cylinderNumber) {
 			return engineConfiguration->knockBankCyl11;
 		case 11:
 			return engineConfiguration->knockBankCyl12;
-#endif
 		default:
 			return 0;
 	}
@@ -116,13 +108,18 @@ void KnockControllerBase::onFastCallback() {
 float KnockController::getKnockThreshold() const {
 	return interpolate2d(
 		Sensor::getOrZero(SensorType::Rpm),
-		engineConfiguration->knockNoiseRpmBins,
-		engineConfiguration->knockBaseNoise
+		config->knockNoiseRpmBins,
+		config->knockBaseNoise
 	);
 }
 
 float KnockController::getMaximumRetard() const {
-	return m_maxRetardTable.getValue(Sensor::getOrZero(SensorType::Rpm), getIgnitionLoad());
+	return
+		interpolate3d(
+			config->maxKnockRetardTable,
+			config->maxKnockRetardLoadBins, getIgnitionLoad(),
+			config->maxKnockRetardRpmBins, Sensor::getOrZero(SensorType::Rpm)
+		);
 }
 
 // This callback is to be implemented by the knock sense driver

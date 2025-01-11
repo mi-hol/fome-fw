@@ -25,14 +25,12 @@
 #include "ac_control.h"
 #include "knock_logic.h"
 #include "idle_state_generated.h"
-#include "sent_state_generated.h"
 #include "dc_motors_generated.h"
 #include "idle_thread.h"
 #include "injector_model.h"
 #include "launch_control.h"
 #include "antilag_system.h"
 #include "trigger_scheduler.h"
-#include "fuel_pump.h"
 #include "main_relay.h"
 #include "ac_control.h"
 #include "type_list.h"
@@ -42,16 +40,18 @@
 #include "harley_acr.h"
 #include "dfco.h"
 #include "fuel_computer.h"
-#include "gear_detector.h"
 #include "advance_map.h"
-#include "fan_control.h"
+#include "ignition_state.h"
 #include "sensor_checker.h"
 #include "fuel_schedule.h"
 #include "prime_injection.h"
 #include "throttle_model.h"
 #include "lambda_monitor.h"
 #include "vvt.h"
-#include "trip_odometer.h"
+
+#include "engine_modules_generated.h"
+
+#include <functional>
 
 #ifndef EFI_UNIT_TEST
 #error EFI_UNIT_TEST must be defined!
@@ -76,9 +76,6 @@
 #include "global_execution_queue.h"
 #endif /* EFI_UNIT_TEST */
 
-#define FAST_CALLBACK_PERIOD_MS 5
-#define SLOW_CALLBACK_PERIOD_MS 50
-
 struct AirmassModelBase;
 
 #define MAF_DECODING_CACHE_SIZE 256
@@ -96,12 +93,23 @@ struct AirmassModelBase;
 
 class IEtbController;
 
+class LedBlinkingTask : public EngineModule {
+public:
+	void onSlowCallback() override;
+
+private:
+	void updateRunningLed();
+	void updateWarningLed();
+	void updateCommsLed();
+	void updateErrorLed();
+
+	size_t m_commBlinkCounter = 0;
+	size_t m_errorBlinkCounter = 0;
+};
+
 class Engine final : public TriggerStateListener {
 public:
 	Engine();
-
-	// todo: technical debt: enableOverdwellProtection #3553
-	bool enableOverdwellProtection = true;
 
 	TunerStudioOutputChannels outputChannels;
 
@@ -112,13 +120,6 @@ public:
 
 	// used by HW CI
 	bool isPwmEnabled = true;
-
-	const char *prevOutputName = nullptr;
-	/**
-	 * ELM327 cannot handle both RX and TX at the same time, we have to stay quite once first ISO/TP packet was detected
-	 * this is a pretty temporary hack only while we are trying ELM327, long term ISO/TP and rusEFI broadcast should find a way to coexists
-	 */
-	bool pauseCANdueToSerial = false;
 
 	PinRepository pinRepository;
 
@@ -140,20 +141,13 @@ public:
 #if EFI_ALTERNATOR_CONTROL
 		AlternatorController,
 #endif /* EFI_ALTERNATOR_CONTROL */
-		FuelPumpController,
 		MainRelayController,
-		IgnitionController,
+		Mockable<IgnitionController>,
 		Mockable<AcController>,
-		FanControl1,
-		FanControl2,
 		PrimeController,
 		DfcoController,
 		HarleyAcr,
 		Mockable<WallFuelController>,
-#if EFI_VEHICLE_SPEED
-		GearDetector,
-		TripOdometer,
-#endif // EFI_VEHICLE_SPEED
 		KnockController,
 		SensorChecker,
 		LimpManager,
@@ -166,6 +160,11 @@ public:
 #if EFI_BOOST_CONTROL
 		BoostController,
 #endif // EFI_BOOST_CONTROL
+		LedBlinkingTask,
+		TpsAccelEnrichment,
+
+		#include "modules_list_generated.h"
+
 		EngineModule // dummy placeholder so the previous entries can all have commas
 		> engineModules;
 
@@ -199,7 +198,7 @@ public:
 	IgnitionState ignitionState;
 	void resetLua();
 
-	efitick_t startStopStateLastPushTime = 0;
+	efitick_t startStopStateLastPushTime;
 
 #if EFI_SHAFT_POSITION_INPUT
 	void OnTriggerStateProperState(efitick_t nowNt) override;
@@ -208,8 +207,6 @@ public:
 #endif
 
 	void setConfig();
-
-	LocalVersionHolder versionForConfigurationListeners;
 
 	AuxActor auxValves[AUX_DIGITAL_VALVE_COUNT][2];
 
@@ -224,13 +221,15 @@ public:
 	// a pointer with interface type would make this code nicer but would carry extra runtime
 	// cost to resolve pointer, we use instances as a micro optimization
 #if EFI_SIGNAL_EXECUTOR_ONE_TIMER
-	SingleTimerExecutor executor;
+	SingleTimerExecutor scheduler;
 #endif
 #if EFI_SIGNAL_EXECUTOR_SLEEP
-	SleepExecutor executor;
+	SleepExecutor scheduler;
 #endif
 #if EFI_UNIT_TEST
-	TestExecutor executor;
+	TestExecutor scheduler;
+
+	std::function<void(IgnitionEvent*, bool)> onIgnitionEvent;
 #endif // EFI_UNIT_TEST
 
 #if EFI_ENGINE_CONTROL
@@ -239,15 +238,13 @@ public:
 	scheduling_s tdcScheduler[2];
 #endif /* EFI_ENGINE_CONTROL */
 
-    // todo: move to electronic_throttle something?
+	// todo: move to electronic_throttle something?
 	bool etbAutoTune = false;
+	bool etbIgnoreJamProtection = false;
 
 #if EFI_UNIT_TEST
 	bool tdcMarkEnabled = true;
 #endif // EFI_UNIT_TEST
-
-
-	bool slowCallBackWasInvoked = false;
 
 	RpmCalculator rpmCalculator;
 
@@ -259,15 +256,11 @@ public:
 	 */
 	int globalConfigurationVersion = 0;
 
-	TpsAccelEnrichment tpsAccelEnrichment;
-
 #if EFI_SHAFT_POSITION_INPUT
 	TriggerCentral triggerCentral;
 #endif // EFI_SHAFT_POSITION_INPUT
 
-
 	float stftCorrection[STFT_BANK_COUNT] = {0};
-
 
 	void periodicFastCallback();
 	void periodicSlowCallback();
@@ -288,7 +281,6 @@ public:
 	EngineState engineState;
 
 	dc_motors_s dc_motors;
-	sent_state_s sent_state;
 
 	/**
 	 * idle blip is a development tool: alternator PID research for instance have benefited from a repetitive change of RPM
@@ -299,7 +291,7 @@ public:
 
 
 	SensorsState sensors;
-	efitick_t mainRelayBenchStartNt = 0;
+	Timer mainRelayBenchTimer;
 
 
 	void preCalculate();
@@ -353,7 +345,7 @@ void unlockEcu(int password);
 // These externs aren't needed for unit tests - everything is injected instead
 #if !EFI_UNIT_TEST
 extern Engine ___engine;
-static Engine * const engine = &___engine;
+static constexpr Engine * const engine = &___engine;
 #else // EFI_UNIT_TEST
 extern Engine *engine;
 #endif // EFI_UNIT_TEST

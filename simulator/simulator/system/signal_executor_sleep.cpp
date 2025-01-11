@@ -35,12 +35,10 @@ struct CallbackContext
 	bool shouldFree = false;
 };
 
-void SleepExecutor::scheduleByTimestamp(const char *msg, scheduling_s *scheduling, efitimeus_t timeUs, action_s action) {
-	scheduleForLater(msg, scheduling, timeUs - getTimeNowUs(), action);
-}
+static void doScheduleForLater(scheduling_s *scheduling, int delayUs, action_s action);
 
-void SleepExecutor::scheduleByTimestampNt(const char *msg, scheduling_s* scheduling, efitick_t timeNt, action_s action) {
-	scheduleByTimestamp(msg, scheduling, NT2US(timeNt), action);
+void SleepExecutor::schedule(const char *msg, scheduling_s* scheduling, efitick_t timeNt, action_s action) {
+	doScheduleForLater(scheduling, NT2US(timeNt) - getTimeNowUs(), action);
 }
 
 static void timerCallback(CallbackContext* ctx) {
@@ -87,19 +85,7 @@ static void doScheduleForLater(scheduling_s *scheduling, int delayUs, action_s a
 		chVTResetI(&scheduling->timer);
 	}
 
-#if EFI_SIMULATOR
-	if (action.getCallback() == (schfunc_t)&turnInjectionPinLow) {
-		//printf("setTime cb=turnInjectionPinLow p=%d\r\n", (int)action.getArgument());
-	} else {
-//		printf("setTime cb=%d p=%d\r\n", (int)callback, (int)param);
-	}
-#endif /* EFI_SIMULATOR */
-
 	chVTSetI(&scheduling->timer, delaySt, (vtfunc_t)timerCallback, ctx);
-}
-
-void SleepExecutor::scheduleForLater(const char *msg, scheduling_s *scheduling, int delayUs, action_s action) {
-	doScheduleForLater(scheduling, delayUs, action);
 }
 
 void SleepExecutor::cancel(scheduling_s* s) {

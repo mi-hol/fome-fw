@@ -23,12 +23,13 @@
 
 #include "pch.h"
 
-#if EFI_CAN_SUPPORT
+#if EFI_CAN_SUPPORT || EFI_UNIT_TEST
 
 #include "obd2.h"
 #include "can.h"
 #include "can_msg_tx.h"
 #include "fuel_math.h"
+#include "malfunction_central.h"
 
 static const int16_t supportedPids0120[] = { 
 	PID_MONITOR_STATUS,
@@ -52,11 +53,14 @@ static const int16_t supportedPids2140[] = {
 };
 
 static const int16_t supportedPids4160[] = { 
+	PID_CONTROL_UNIT_VOLTAGE,
+	PID_ETHANOL,
 	PID_FUEL_RATE,
+	PID_OIL_TEMPERATURE,
 	-1
 };
 
-static void obdSendPacket(int mode, int PID, int numBytes, uint32_t iValue, CanBusIndex busIndex) {
+static void obdSendPacket(int mode, uint8_t pid, int numBytes, uint32_t iValue, CanBusIndex busIndex) {
 	// Respond on the same bus we got the request from
 	CanTxMessage resp(OBD_TEST_RESPONSE, 8, busIndex, false);
 
@@ -64,7 +68,7 @@ static void obdSendPacket(int mode, int PID, int numBytes, uint32_t iValue, CanB
 	resp[0] = (uint8_t)(2 + numBytes);
 	// write 2 bytes of header
 	resp[1] = (uint8_t)(0x40 + mode);
-	resp[2] = (uint8_t)PID;
+	resp[2] = pid;
 	// write N data bytes
 	for (int i = 8 * (numBytes - 1), j = 3; i >= 0; i -= 8, j++) {
 		resp[j] = (uint8_t)((iValue >> i) & 0xff);
@@ -84,7 +88,7 @@ static void obdSendValue(int mode, int PID, int numBytes, float value, CanBusInd
 
 //#define MOCK_SUPPORTED_PIDS 0xffffffff
 
-static void obdWriteSupportedPids(int PID, int bitOffset, const int16_t *supportedPids, CanBusIndex busIndex) {
+static void obdWriteSupportedPids(uint8_t pid, int bitOffset, const int16_t *supportedPids, CanBusIndex busIndex) {
 	uint32_t value = 0;
 	// gather all 32 bit fields
 	for (int i = 0; i < 32 && supportedPids[i] > 0; i++)
@@ -95,11 +99,39 @@ static void obdWriteSupportedPids(int PID, int bitOffset, const int16_t *support
 	value = MOCK_SUPPORTED_PIDS;
 #endif
 
-	obdSendPacket(1, PID, 4, value, busIndex);
+	obdSendPacket(1, pid, 4, value, busIndex);
 }
 
-static void handleGetDataRequest(const CANRxFrame& rx, CanBusIndex busIndex) {
-	int pid = rx.data8[2];
+static void obdStatusQuery(uint8_t pid, CanBusIndex busIndex) {
+	static error_codes_set_s localErrorCopy;
+	getErrorCodes(&localErrorCopy);
+
+	CanTxMessage tx(OBD_TEST_RESPONSE, 8, busIndex, false);
+
+	// set bit 7 if MIL on
+	uint8_t byteA = (localErrorCopy.count > 0) ? (1 << 7) : 0x0;
+	// bottom 7 bits contain code count
+	byteA |= 0x7F & localErrorCopy.count;
+
+	tx[0] = 0x6;
+	tx[1] = 0x41;
+	tx[2] = pid;
+	tx[3] = byteA;
+
+	// bytes B-D are all zeroes since we don't support readiness monitors
+	tx[4] = 0x0;
+	tx[5] = 0x0;
+	tx[6] = 0x0;
+}
+
+static void handleGetDataRequest(uint8_t length, const CANRxFrame& rx, CanBusIndex busIndex) {
+	if (length != 2) {
+		// expect length 2: service + PID
+		return;
+	}
+	
+	auto pid = rx.data8[2];
+
 	switch (pid) {
 	case PID_SUPPORTED_PIDS_REQUEST_01_20:
 		obdWriteSupportedPids(pid, 1, supportedPids0120, busIndex);
@@ -111,7 +143,7 @@ static void handleGetDataRequest(const CANRxFrame& rx, CanBusIndex busIndex) {
 		obdWriteSupportedPids(pid, 41, supportedPids4160, busIndex);
 		break;
 	case PID_MONITOR_STATUS:
-		obdSendPacket(1, pid, 4, 0, busIndex);	// todo: add statuses
+		obdStatusQuery(pid, busIndex);
 		break;
 	case PID_FUEL_SYSTEM_STATUS:
 		// todo: add statuses
@@ -160,11 +192,23 @@ static void handleGetDataRequest(const CANRxFrame& rx, CanBusIndex busIndex) {
 
 		obdSendPacket(1, pid, 4, scaled << 16, busIndex);
 		break;
+
+	#ifdef MODULE_TRIP_ODO
 	} case PID_FUEL_RATE: {
 		float gPerSecond = engine->module<TripOdometer>()->getConsumptionGramPerSecond();
 		float gPerHour = gPerSecond * 3600;
 		float literPerHour = gPerHour * 0.00139f;
 		obdSendValue(_1_MODE, pid, 2, literPerHour * 20.0f, busIndex);	//	L/h.	(A*256+B)/20
+		break;
+	#endif // MODULE_TRIP_ODO
+	} case PID_CONTROL_UNIT_VOLTAGE: {
+		obdSendValue(_1_MODE, pid, 2, 1000 * Sensor::getOrZero(SensorType::BatteryVoltage), busIndex);
+		break;
+	} case PID_ETHANOL: {
+		obdSendValue(_1_MODE, pid, 1, (255.0f / 100) * Sensor::getOrZero(SensorType::FuelEthanolPercent), busIndex);
+		break;
+	} case PID_OIL_TEMPERATURE: {
+		obdSendValue(_1_MODE, pid, 1, Sensor::getOrZero(SensorType::OilTemperature) + ODB_TEMP_EXTRA, busIndex);
 		break;
 	} default:
 		// ignore unhandled PIDs
@@ -172,36 +216,104 @@ static void handleGetDataRequest(const CANRxFrame& rx, CanBusIndex busIndex) {
 	}
 }
 
-static void handleDtcRequest(int numCodes, ObdCode* dtcCode) {
-	// TODO: this appears to be unfinished?
-	UNUSED(numCodes);
-	UNUSED(dtcCode);
-
-	// int numBytes = numCodes * 2;
-	// // write CAN-TP Single Frame header?
-	// txmsg.data8[0] = (uint8_t)((0 << 4) | numBytes);
-	// for (int i = 0, j = 1; i < numCodes; i++) {
-	// 	txmsg.data8[j++] = (uint8_t)((dtcCode[i] >> 8) & 0xff);
-	// 	txmsg.data8[j++] = (uint8_t)(dtcCode[i] & 0xff);
-	// }
+static void writeDtc(CanTxMessage& msg, size_t offset, ObdCode code) {
+	msg[offset + 0] = (static_cast<uint16_t>(code) >> 8) & 0xFF;
+	msg[offset + 1] = (static_cast<uint16_t>(code) >> 0) & 0xFF;
 }
 
-#if HAL_USE_CAN
+static void handleDtcRequest(uint8_t service, int numCodes, ObdCode* dtcCode, CanBusIndex busIndex) {
+// Hack: only report first two codes as multi-frame response isn't ready
+	if (numCodes > 2) {
+		numCodes = 2;
+	}
+
+	if (numCodes == 0) {
+		// No DTCs: Respond with no trouble codes
+		CanTxMessage tx(OBD_TEST_RESPONSE, 8, busIndex, false);
+		tx[0] = 0x2;				// 2 data bytes
+		tx[1] = 0x40 + service;		// Service $03 response
+		tx[2] = 0x0;				// No DTCs
+	} else if (numCodes <= 2) {
+		// Response will fit in a single frame
+		CanTxMessage tx(OBD_TEST_RESPONSE, 8, busIndex, false);
+		tx[0] = 1 + 1 + 2 * numCodes;	// 1 (service) + 1 (num bytes) + 2*N (codes) data bytes
+		tx[1] = 0x40 + service;		// Service $03 response
+		tx[2] = numCodes;			// N stored codes
+
+		for (int i = 0; i < numCodes; i++) {
+			int dest = 3 + 2 * i;
+			writeDtc(tx, dest, dtcCode[i]);
+		}
+	} else {
+		// Too many codes for a single frame, respond in multiple
+
+		// TODO: implement ISO-TP multi frame response
+
+		// CanTxMessage tx(OBD_TEST_RESPONSE, 2, busIndex, false);
+		// int dtcIndex = 0;
+		// int frameIndex = 0;
+		// tx[1] = 0x40 + service;
+
+		// while (dtcIndex < numCodes) {
+		// 	if (frameIndex == 0) {
+		// 		// First frame setup
+		// 		tx[0] = (numCodes * 2) & 0xFF; // Total DTC data length
+		// 		int bytesAdded = 0;
+
+		// 		for (int i = 0; i < 3 && dtcIndex < numCodes; i++) {
+		// 			int dtc = (int)dtcCode[dtcIndex++];
+		// 			tx[2 + bytesAdded] = (dtc >> 8) & 0xFF;
+		// 			tx[3 + bytesAdded] = dtc & 0xFF;
+		// 			bytesAdded += 2;
+		// 		}
+
+		// 		tx.setDlc(2 + bytesAdded);
+		// 	} else {
+		// 		// Consecutive frames
+		// 		tx[0] = 0x21 + (frameIndex - 1);
+		// 		int bytesAdded = 0;
+
+		// 		for (int i = 0; i < 7 && dtcIndex < numCodes; i++) {
+		// 			int dtc = (int)dtcCode[dtcIndex++];
+		// 			tx[1 + bytesAdded] = (dtc >> 8) & 0xFF;
+		// 			tx[2 + bytesAdded] = dtc & 0xFF;
+		// 			bytesAdded += 2;
+		// 		}
+
+		// 		tx.setDlc(1 + bytesAdded);
+		// 	}
+
+		// 	frameIndex++;
+		// }
+	}
+}
+
+// #if HAL_USE_CAN || EFI_UNIT_TEST
 void obdOnCanPacketRx(const CANRxFrame& rx, CanBusIndex busIndex) {
 	if (CAN_SID(rx) != OBD_TEST_REQUEST) {
 		return;
 	}
 
-	if (rx.data8[0] == _OBD_2 && rx.data8[1] == OBD_CURRENT_DATA) {
-		handleGetDataRequest(rx, busIndex);
-	} else if (rx.data8[0] == 1 && rx.data8[1] == OBD_STORED_DIAGNOSTIC_TROUBLE_CODES) {
-		// todo: implement stored/pending difference?
-		handleDtcRequest(1, &engine->engineState.warnings.lastErrorCode);
-	} else if (rx.data8[0] == 1 && rx.data8[1] == OBD_PENDING_DIAGNOSTIC_TROUBLE_CODES) {
-		// todo: implement stored/pending difference?
-		handleDtcRequest(1, &engine->engineState.warnings.lastErrorCode);
+	auto length = rx.data8[0];
+	auto service = rx.data8[1];
+
+	switch (service) {
+	case OBD_CURRENT_DATA:
+		handleGetDataRequest(length, rx, busIndex);
+		break;
+	case OBD_STORED_DTC:
+		static error_codes_set_s localErrorCopy;
+		getErrorCodes(&localErrorCopy);
+
+		handleDtcRequest(service, localErrorCopy.count, localErrorCopy.error_codes, busIndex);
+		break;
+	case OBD_PENDING_DTC:
+	case OBD_PERMANENT_DTC:
+		// We don't support pending or permanent DTCs.
+		handleDtcRequest(service, 0, nullptr, busIndex);
+		break;
 	}
 }
-#endif /* HAL_USE_CAN */
+// #endif /* HAL_USE_CAN */
 
-#endif /* EFI_CAN_SUPPORT */
+#endif /* EFI_CAN_SUPPORT || EFI_UNIT_TEST */

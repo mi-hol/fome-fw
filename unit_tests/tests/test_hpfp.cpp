@@ -13,10 +13,14 @@ TEST(HPFP, Lobe) {
 	engineConfiguration->hpfpPeakPos = 123;
 	engineConfiguration->hpfpCamLobes = 3;
 
-	engine->triggerCentral.vvtPosition[0][0] = 20; // Bank 0
-	engine->triggerCentral.vvtPosition[0][1] = 40;
-	engine->triggerCentral.vvtPosition[1][0] = 60; // Bank 1
-	engine->triggerCentral.vvtPosition[1][1] = 80;
+	engine->triggerCentral.vvtPosition[0][0].angle = 20; // Bank 0
+	engine->triggerCentral.vvtPosition[0][0].t.reset();
+	engine->triggerCentral.vvtPosition[0][1].angle = 40;
+	engine->triggerCentral.vvtPosition[0][1].t.reset();
+	engine->triggerCentral.vvtPosition[1][0].angle = 60; // Bank 1
+	engine->triggerCentral.vvtPosition[1][0].t.reset();
+	engine->triggerCentral.vvtPosition[1][1].angle = 80;
+	engine->triggerCentral.vvtPosition[1][1].t.reset();
 
 	HpfpLobe lobe;
 
@@ -79,19 +83,19 @@ TEST(HPFP, InjectionReplacementFuel) {
 		engineConfiguration->hpfpCamLobes; // Make math easier
 	for (int i = 0; i < HPFP_COMPENSATION_SIZE; i++) {
 		// one bin every 1000 RPM
-		engineConfiguration->hpfpCompensationRpmBins[i] = std::min(i * 1000, 8000);
+		config->hpfpCompensationRpmBins[i] = std::min(i * 1000, 8000);
 	}
 	for (int i = 0; i < HPFP_COMPENSATION_SIZE; i++) {
 		// one bin every 0.05 cc/lobe
-		engineConfiguration->hpfpCompensationLoadBins[i] = std::min(i * 0.05, 60.);
+		config->hpfpCompensationLoadBins[i] = std::min(i * 0.05, 60.);
 	}
 
-	engineConfiguration->hpfpCompensation[2][1] = -10;
+	config->hpfpCompensation[2][1] = -10;
 	EXPECT_FLOAT_EQ(math.calcFuelPercent(1000), 40); // -10, in cell
 	EXPECT_FLOAT_EQ(math.calcFuelPercent(1500), 45); // -5, half way
 	EXPECT_FLOAT_EQ(math.calcFuelPercent(2000), 50); // -0, in next cell
 
-	engineConfiguration->hpfpCompensation[2][1] = 20;
+	config->hpfpCompensation[2][1] = 20;
 	EXPECT_FLOAT_EQ(math.calcFuelPercent(1000), 70); // +20, in cell
 	EXPECT_FLOAT_EQ(math.calcFuelPercent(1500), 60); // +10, half way
 	EXPECT_FLOAT_EQ(math.calcFuelPercent(2000), 50); // +0, in next cell
@@ -115,15 +119,15 @@ TEST(HPFP, PI) {
 
 	for (int i = 0; i < HPFP_TARGET_SIZE; i++) {
 		// one bin every 1000 RPM
-		engineConfiguration->hpfpTargetRpmBins[i] = std::min(i * 1000, 8000);
+		config->hpfpTargetRpmBins[i] = std::min(i * 1000, 8000);
 	}
 	for (int i = 0; i < HPFP_TARGET_SIZE; i++) {
 		// one bin every 20kPa
-		engineConfiguration->hpfpTargetLoadBins[i] = std::min(i * 20, 200);
+		config->hpfpTargetLoadBins[i] = std::min(i * 20, 200);
 	}
 	for (int r = 0; r < HPFP_TARGET_SIZE; r++) {
 		for (int c = 0; c < HPFP_TARGET_SIZE; c++) {
-			engineConfiguration->hpfpTarget[r][c] = 1000 * r + 10 * c;
+			config->hpfpTarget[r][c] = 1000 * r + 10 * c;
 		}
 	}
 
@@ -143,7 +147,7 @@ TEST(HPFP, PI) {
 	EXPECT_FLOAT_EQ(math.m_pressureTarget_kPa, 2040);
 	engineConfiguration->hpfpTargetDecay = 1000;
 	math.calcPI(1000, 0);
-	EXPECT_FLOAT_EQ(math.m_pressureTarget_kPa, 2035); // 5ms of decay
+	EXPECT_FLOAT_EQ(math.m_pressureTarget_kPa, 2036); // 5ms of decay
 
 	// Proportional gain
 	math.reset(); // Reset for ease of testing
@@ -156,8 +160,8 @@ TEST(HPFP, PI) {
 
 	// Integral gain
 	engineConfiguration->hpfpPidI = 0.001;
-	EXPECT_FLOAT_EQ(math.calcPI(1000, 0), 20.368334);
-	EXPECT_FLOAT_EQ(math.m_I_sum_percent, 0.168333333);
+	EXPECT_FLOAT_EQ(math.calcPI(1000, 0), 20.334667);
+	EXPECT_FLOAT_EQ(math.m_I_sum_percent, 0.13466665);
 }
 
 TEST(HPFP, Angle) {
@@ -172,20 +176,20 @@ TEST(HPFP, Angle) {
 
 	for (int i = 0; i < HPFP_TARGET_SIZE; i++) {
 		// one bin every 1000 RPM
-		engineConfiguration->hpfpTargetRpmBins[i] = std::min(i * 1000, 8000);
+		config->hpfpTargetRpmBins[i] = std::min(i * 1000, 8000);
 	}
 	for (int i = 0; i < HPFP_TARGET_SIZE; i++) {
 		// one bin every 20kPa
-		engineConfiguration->hpfpTargetLoadBins[i] = std::min(i * 20, 200);
+		config->hpfpTargetLoadBins[i] = std::min(i * 20, 200);
 	}
 	for (int r = 0; r < HPFP_TARGET_SIZE; r++) {
 		for (int c = 0; c < HPFP_TARGET_SIZE; c++) {
-			engineConfiguration->hpfpTarget[r][c] = 1000 * r + 10 * c;
+			config->hpfpTarget[r][c] = 1000 * r + 10 * c;
 		}
 	}
 	for (int i = 0; i < HPFP_LOBE_PROFILE_SIZE; i++) {
-		engineConfiguration->hpfpLobeProfileQuantityBins[i] = 100. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
-		engineConfiguration->hpfpLobeProfileAngle[i] = 150. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
+		config->hpfpLobeProfileQuantityBins[i] = 100. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
+		config->hpfpLobeProfileAngle[i] = 150. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
 	}
 
 	HpfpController model;
@@ -217,26 +221,26 @@ TEST(HPFP, Schedule) {
 
 	for (int i = 0; i < HPFP_TARGET_SIZE; i++) {
 		// one bin every 1000 RPM
-		engineConfiguration->hpfpTargetRpmBins[i] = std::min(i * 1000, 8000);
+		config->hpfpTargetRpmBins[i] = std::min(i * 1000, 8000);
 	}
 	for (int i = 0; i < HPFP_TARGET_SIZE; i++) {
 		// one bin every 20kPa
-		engineConfiguration->hpfpTargetLoadBins[i] = std::min(i * 20, 200);
+		config->hpfpTargetLoadBins[i] = std::min(i * 20, 200);
 	}
 	for (int r = 0; r < HPFP_TARGET_SIZE; r++) {
 		for (int c = 0; c < HPFP_TARGET_SIZE; c++) {
-			engineConfiguration->hpfpTarget[r][c] = 1000 * r + 10 * c;
+			config->hpfpTarget[r][c] = 1000 * r + 10 * c;
 		}
 	}
 	for (int i = 0; i < HPFP_LOBE_PROFILE_SIZE; i++) {
-		engineConfiguration->hpfpLobeProfileQuantityBins[i] = 100. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
-		engineConfiguration->hpfpLobeProfileAngle[i] = 150. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
+		config->hpfpLobeProfileQuantityBins[i] = 100. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
+		config->hpfpLobeProfileAngle[i] = 150. * i / (HPFP_LOBE_PROFILE_SIZE - 1);
 	}
 
 	auto & hpfp = *engine->module<HpfpController>();
 
 	StrictMock<MockExecutor> mockExec;
-	engine->executor.setMockExecutor(&mockExec);
+	engine->scheduler.setMockExecutor(&mockExec);
 	engineConfiguration->hpfpActivationAngle = 30;
 
 	constexpr angle_t angle0 = 90;
@@ -254,13 +258,13 @@ TEST(HPFP, Schedule) {
 
 		// First call to setRpmValue will cause a dummy call to fast periodic timer.
 		// Injection Mass will be 0 so expect a no-op.
-		EXPECT_CALL(mockExec, scheduleByTimestampNt(testing::NotNull(), &hpfp.m_event.scheduling, nt0, action_s(HpfpController::pinTurnOff, &hpfp)));
+		EXPECT_CALL(mockExec, schedule(testing::NotNull(), &hpfp.m_event.scheduling, nt0, action_s(HpfpController::pinTurnOff, &hpfp)));
 
 		// Second call will be the start of a real pump event.
-		EXPECT_CALL(mockExec, scheduleByTimestampNt(testing::NotNull(), &hpfp.m_event.scheduling, nt1, action_s(HpfpController::pinTurnOn, &hpfp)));
+		EXPECT_CALL(mockExec, schedule(testing::NotNull(), &hpfp.m_event.scheduling, nt1, action_s(HpfpController::pinTurnOn, &hpfp)));
 
 		// Third call will be off event
-		EXPECT_CALL(mockExec, scheduleByTimestampNt(testing::NotNull(), &hpfp.m_event.scheduling, nt2, action_s(HpfpController::pinTurnOff, &hpfp)));
+		EXPECT_CALL(mockExec, schedule(testing::NotNull(), &hpfp.m_event.scheduling, nt2, action_s(HpfpController::pinTurnOff, &hpfp)));
 	}
 	EXPECT_CALL(mockExec, cancel(_)).Times(2);
 
@@ -276,7 +280,7 @@ TEST(HPFP, Schedule) {
 	eth.assertTriggerEvent("h0", 0, &hpfp.m_event, (void*)&HpfpController::pinTurnOff, 270);
 
 	// Make the previous event happen, schedule the next.
-	engine->module<TriggerScheduler>()->scheduleEventsUntilNextTriggerTooth(
+	engine->module<TriggerScheduler>()->onEnginePhase(
 		1000, tick_per_deg * 0, 180, 360);
 	// Mock executor doesn't run events, so we run it manually
 	HpfpController::pinTurnOff(&hpfp);
@@ -285,7 +289,7 @@ TEST(HPFP, Schedule) {
 	eth.assertTriggerEvent("h1", 0, &hpfp.m_event, (void*)&HpfpController::pinTurnOn, 450 - 37.6923065f);
 
 	// Make it happen
-	engine->module<TriggerScheduler>()->scheduleEventsUntilNextTriggerTooth(
+	engine->module<TriggerScheduler>()->onEnginePhase(
 		1000, tick_per_deg * 180, 360, 540);
 
 	// Since we have a mock scheduler, lets insert the correct timestamp in the scheduling
